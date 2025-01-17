@@ -781,11 +781,12 @@ int main(int argc, char *argv[])
         //      printf("unknown option: %c\n", optopt); 
         case 'h':
         default:
-            fprintf(stderr, "Usage: %s [-hg] [-b baud_rate] [file...]\n", argv[0]);
+            fprintf(stderr, "Usage: sudo %s [-hgvn] [-b baud_rate]\n", argv[0]);
             fprintf(stderr, "\t-g uses greyscale instead of the jet colorscale\n");
             fprintf(stderr, "\t-b changes the default baud rate of 62500 to something else\n");
             fprintf(stderr, "\t-v outputs to a video using ffmpeg\n");
             fprintf(stderr, "\t-n disables python fileserver for web stream\n");
+            fprintf(stderr, "\t-h displays the usage message and exits\n");
             exit(EXIT_FAILURE);
         }
     }
