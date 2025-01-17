@@ -748,16 +748,20 @@ void intHandler(int dummy) {
 
 int main(int argc, char *argv[])
 {
+    bool stream = true;
     bool video = false;
     bool grey_scale = false;
     unsigned int baud_rate = 62500;
     int opt;
 
-    while ((opt = getopt(argc, argv, "vgb:h")) != -1) {
+    while ((opt = getopt(argc, argv, "nvgb:h")) != -1) {
         switch (opt) {
         case 'v': 
 		printf("Streaming to a video using ffmpeg\n", baud_rate) ; 
 		video = true; break;
+        case 'n': 
+		printf("disabling python web stream server\n", baud_rate) ; 
+		stream = false; break;
         case 'g': 
 		printf("Using grey scale\n", baud_rate) ; 
 		grey_scale = true; break;
@@ -778,8 +782,10 @@ int main(int argc, char *argv[])
         case 'h':
         default:
             fprintf(stderr, "Usage: %s [-hg] [-b baud_rate] [file...]\n", argv[0]);
-            fprintf(stderr, "\t-g uses greyscale instead of the jet colorscale\n", argv[0]);
-            fprintf(stderr, "\t-b changes the default baud rate of 62500 to something else\n", argv[0]);
+            fprintf(stderr, "\t-g uses greyscale instead of the jet colorscale\n");
+            fprintf(stderr, "\t-b changes the default baud rate of 62500 to something else\n");
+            fprintf(stderr, "\t-v outputs to a video using ffmpeg\n");
+            fprintf(stderr, "\t-n disables python fileserver for web stream\n");
             exit(EXIT_FAILURE);
         }
     }
@@ -806,6 +812,19 @@ int main(int argc, char *argv[])
                                " -pixel_format bgr24 -i pipe: -vcodec libx264 -crf 24 -pix_fmt yuv420p output.mkv";
       //https://batchloaf.wordpress.com/2017/02/12/a-simple-way-to-read-and-write-audio-and-video-files-in-c-using-ffmpeg-part-2-video/
       pipeout = popen(ffmpeg_cmd.c_str(), "w");     //Linux (assume ffmpeg exist in /usr/bin/ffmpeg (and in path).
+    }
+
+    if ( stream ) {
+      pid_t pid = fork();
+      if (pid < 0) {
+          perror("fork failed");
+          exit(1);
+      } else if (pid == 0) {
+        system("python3 -m http.server 2> /dev/null");
+	fprintf(stderr, "Error: Stream unexpectedly closed\n");
+	exit(1);
+      } 
+      sleep(1); // let the server start
     }
 
     time_t time0 = time(NULL);

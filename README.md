@@ -4,6 +4,8 @@ However, the PiThermalCam project is still a great project if you feel different
 The interface with the MLX9064 is a rewritten version of adafruit_mlx90640.py in C.
 
 ## Compiling
-
+```
+sudo apt-get install libopencv-dev
+```
 ## Example
 ![Thermal Image of Me](/out_example.jpg)
