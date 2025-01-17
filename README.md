@@ -13,6 +13,7 @@ Compiling:
 ```
 make
 ```
+Ideally, you should not have to compile if you are using raspberian OS and the 32-bit version of the pi. However, the included binary could have other issues.
 
 ## Example
 ```
