@@ -751,7 +751,7 @@ void SetRefreshRate( int rate ) {
     case 64: 
       mask_value = 0x0380; break;
   }
-  uint16_t control_masked = (control&(!mask))|mask_value;
+  uint16_t control_masked = (control&(~mask))|mask_value;
   control_masked |= 1<<12; // chess pattern
   control_masked |= (1<<11)+(1<<10); // 19-bit ADC
   control_masked &= ~(1<<3); // Sub-page toggle on
@@ -759,7 +759,7 @@ void SetRefreshRate( int rate ) {
   control_masked |= 1<<0; // Sub-pate mode on
   // printf("control_masked 0x%x\n", control_masked);
   char b1 = control_masked>>8;
-  char b2 = control_masked|0x0380;
+  char b2 = control_masked;
   char bufw[4] = {0x80, 0x0D, b1, b2};
   uint8_t data = bcm2835_i2c_write(bufw, 4);
 }
@@ -816,7 +816,7 @@ int main(int argc, char *argv[])
     bool stream = true;
     bool video = false;
     bool grey_scale = false;
-    unsigned int baud_rate = 200000;
+    unsigned int baud_rate = 0;
     unsigned int refresh_rate = 4;
     int opt;
     bool onlyrefresh = false;
@@ -861,7 +861,7 @@ int main(int argc, char *argv[])
         default:
             fprintf(stderr, "Usage: sudo %s [-hgvnf] [-b baud_rate] [-r refresh_rate]\n", argv[0]);
             fprintf(stderr, "\t-g uses greyscale instead of the jet colorscale\n");
-            fprintf(stderr, "\t-b changes the default baud rate of 200000 to something else\n");
+            fprintf(stderr, "\t-b changes the baud rate using the bcm2835 library. Default is your system default.\n");
             fprintf(stderr, "\t-r changes the default refresh rate of 4 Hz. Values are 0, 2, 4, 6, 8, 16, 32, 64.\n");
             fprintf(stderr, "\t-v outputs to a video using ffmpeg\n");
             fprintf(stderr, "\t-n disables python fileserver for web stream\n");
@@ -880,7 +880,8 @@ int main(int argc, char *argv[])
 
 
     bcm2835_i2c_setSlaveAddress(0x33);
-    bcm2835_i2c_set_baudrate ( baud_rate ); 
+    if ( baud_rate )
+      bcm2835_i2c_set_baudrate ( baud_rate ); 
     SetRefreshRate( refresh_rate ) ;
     if ( onlyrefresh ) {
       time_t time0 = time(NULL);
