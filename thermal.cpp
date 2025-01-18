@@ -703,6 +703,54 @@ void GetThermalData(uint16_t thermal_data[32][24]) {
     }
   }
 }
+
+uint16_t GetControlRegister() {
+      const int len = 2;
+      char cmds[2] = {0x80, 0x0D};
+      char buf[len];
+      uint8_t data = bcm2835_i2c_write_read_rs(cmds, len, buf, len);
+      return (buf[0]<<8)+buf[1];
+}
+
+void SetRefreshRate( int rate ) {
+  uint16_t control = GetControlRegister() ;
+  uint16_t mask = 0x0380;
+  uint16_t mask_value = 0;
+  switch (rate) {
+    case 0: 
+      mask_value = 0x0000; break;
+    case 1: 
+      mask_value = 0x0080; break;
+    case 2: 
+      mask_value = 0x0100; break;
+    case 4: 
+      mask_value = 0x0180; break;
+    case 8: 
+      mask_value = 0x0200; break;
+    case 16: 
+      mask_value = 0x0280; break;
+    case 32: 
+      mask_value = 0x0300; break;
+    case 64: 
+      mask_value = 0x0380; break;
+  }
+  uint16_t control_masked = (control&(!mask))|mask_value;
+  control_masked |= 1<<12; // chess pattern
+  control_masked |= (1<<11)+(1<<10); // 19-bit ADC
+  control_masked &= ~(1<<3); // Sub-page toggle on
+  control_masked &= ~(1<<2); // No data hold
+  control_masked |= 1<<0; // Sub-pate mode on
+  // printf("control_masked 0x%x\n", control_masked);
+  char b1 = control_masked>>8;
+  char b2 = control_masked|0x0380;
+  char bufw[4] = {0x80, 0x0D, b1, b2};
+  uint8_t data = bcm2835_i2c_write(bufw, 4);
+}
+
+bool IsPowerOfTwo ( int x ) {
+  return ( x & (x-1) ) == 0;
+}
+
 void GetParameterData(uint16_t parameter_data[66]) {
   int addr = 0x400+32*24;
   for ( int i = 0; i < 66; i++ ) {
@@ -752,19 +800,32 @@ int main(int argc, char *argv[])
     bool video = false;
     bool grey_scale = false;
     unsigned int baud_rate = 62500;
+    unsigned int refresh_rate = 0;
     int opt;
-
-    while ((opt = getopt(argc, argv, "nvgb:h")) != -1) {
+    bool onlyrefresh = false;
+    while ((opt = getopt(argc, argv, "fnvgb:r:h")) != -1) {
         switch (opt) {
+        case 'f': 
+		printf("only computing ideal refresh rate and exiting\n") ; 
+		onlyrefresh = true; break;
         case 'v': 
-		printf("Streaming to a video using ffmpeg\n", baud_rate) ; 
+		printf("Streaming to a video using ffmpeg\n") ; 
 		video = true; break;
         case 'n': 
-		printf("disabling python web stream server\n", baud_rate) ; 
+		printf("disabling python web stream server\n") ; 
 		stream = false; break;
         case 'g': 
-		printf("Using grey scale\n", baud_rate) ; 
+		printf("Using grey scale\n") ; 
 		grey_scale = true; break;
+        case 'r': 
+		  sscanf(argv[optind-1], "%d", &refresh_rate) ; 
+		  printf("new refresh rate: %d\n", refresh_rate) ; 
+		  if ( !IsPowerOfTwo ( refresh_rate ) || refresh_rate>64 ) {
+	            fprintf(stderr, "Error: bad refresh rate\n");
+		    return 1;
+		  } 
+
+		  break;
         case 'b': 
 		  sscanf(argv[optind-1], "%d", &baud_rate) ; 
 		  printf("new baud rate: %d\n", baud_rate) ; 
@@ -781,11 +842,13 @@ int main(int argc, char *argv[])
         //      printf("unknown option: %c\n", optopt); 
         case 'h':
         default:
-            fprintf(stderr, "Usage: sudo %s [-hgvn] [-b baud_rate]\n", argv[0]);
+            fprintf(stderr, "Usage: sudo %s [-hgvnf] [-b baud_rate] [-r refresh_rate]\n", argv[0]);
             fprintf(stderr, "\t-g uses greyscale instead of the jet colorscale\n");
             fprintf(stderr, "\t-b changes the default baud rate of 62500 to something else\n");
+            fprintf(stderr, "\t-r changes the default baud rate of 0.5 Hz. Values are 0, 2, 4, 6, 8, 16, 32, 64.\n");
             fprintf(stderr, "\t-v outputs to a video using ffmpeg\n");
             fprintf(stderr, "\t-n disables python fileserver for web stream\n");
+            fprintf(stderr, "\t-f computes ideal refresh rate and exits\n");
             fprintf(stderr, "\t-h displays the usage message and exits\n");
             exit(EXIT_FAILURE);
         }
@@ -798,10 +861,37 @@ int main(int argc, char *argv[])
     // signal(SIGINT, cleanup);
     signal(SIGINT, intHandler);
 
+
     bcm2835_i2c_setSlaveAddress(0x33);
     // bcm2835_i2c_setClockDivider(4000); // base clock is 250MHz
     bcm2835_i2c_set_baudrate ( baud_rate ); // 62.5 kHz should be same as 4000 clock divider
-    eeparameters eeparams = GetEEParameters ();
+    SetRefreshRate( refresh_rate ) ;
+    if ( onlyrefresh ) {
+      time_t time0 = time(NULL);
+      int frame_count = 0;
+      while(keepRunning) {
+        bool hasdata = GetHasData();
+        while ( !hasdata ) {
+          hasdata = GetHasData();
+          usleep(1000);
+          time_t now = time(NULL);
+          if ( (now-time0) > 60 ) {
+            fprintf(stderr, "Error timeout after 30 seconds of no data\n");
+            cleanup(0);        
+            return 1;
+          }
+        }
+        ClearStatusRegister();
+        frame_count++;
+        time_t now = time(NULL);
+        if ( (now-time0) > 30 )  break;
+      }
+      time_t now = time(NULL);
+      printf("Ideal %f fps", (double)frame_count/(double)(now-time0));
+      cleanup(0);        
+      return 0;
+    }
+
     int height=240+30;
     int width=320;
     int fps = 3;
@@ -828,13 +918,15 @@ int main(int argc, char *argv[])
       sleep(1); // let the server start
     }
 
+    eeparameters eeparams = GetEEParameters ();
+
     time_t time0 = time(NULL);
     int frame_count = 0;
     while(keepRunning) {
       bool hasdata = GetHasData();
       while ( !hasdata ) {
         hasdata = GetHasData();
-        usleep(50000);
+        usleep(1000);
         time_t now = time(NULL);
 	if ( (now-time0) > 30 ) {
 	  fprintf(stderr, "Error timeout after 30 seconds of no data\n");
