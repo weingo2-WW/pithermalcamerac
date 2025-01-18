@@ -481,7 +481,7 @@ double GetTa ( uint16_t* parameter_data, struct eeparameters* eeparams ) {
 	  
 }
 
-void ToTemperature ( uint16_t* parameter_data, struct eeparameters* eeparams, uint16_t thermal_data[32][24], double emissivity, double temperature[32][24] ) {
+void ToTemperature ( uint16_t* parameter_data, struct eeparameters* eeparams, uint16_t thermal_data[32][24], double emissivity, double temperature[32][24], bool page ) {
   int subPage = parameter_data[833-32*24];
 
   double vdd = GetVdd ( parameter_data, eeparams ) ;
@@ -541,6 +541,11 @@ void ToTemperature ( uint16_t* parameter_data, struct eeparameters* eeparams, ui
   for ( int i = 0; i < 24; i ++ ) {
     for ( int j = 0; j < 32; j ++ ) {
       int p = 32 * i + j;
+      // complex logic for chess pattern reading
+      // even i and even j or odd i and odd j is sub page 0
+      // even i and odd j or odd i and even j is sub page 1
+      if ( (((!(i%2) && !(j%2))||((i%2) && (j%2))) && !page) || (((!(i%2) && (j%2))||((i%2) && !(j%2))) && page) ) {
+
       // if self._IsPixelBad(pixelNumber):
       //     # print("Fixing broken pixel %d" % pixelNumber)
       //     result[pixelNumber] = -273.15
@@ -561,7 +566,7 @@ void ToTemperature ( uint16_t* parameter_data, struct eeparameters* eeparams, ui
       else
           pattern = chessPattern;
 
-      // if ( pattern == parameter_data[833-32*24] ) {
+      // if ( pattern == parameter_data[833-32*24] ) 
       if ( 1 ) {
       double irData = (int16_t)thermal_data[j][i];
       irData *= gain;
@@ -635,6 +640,7 @@ void ToTemperature ( uint16_t* parameter_data, struct eeparameters* eeparams, ui
       temperature[j][i] = To*9./5.+32;
     }
     }
+    }
   }
 }
 
@@ -677,6 +683,13 @@ bool GetHasData() {
       return status&0b1000;
 }
 
+// 0 is sub-page 0
+// 1 is sub-page 1
+bool GetPage() {
+      uint16_t status = GetStatusRegister();
+      return status&0b1;
+}
+
 void ClearStatusRegister() {
       const int len = 2;
       char cmds[2] = {0x80, 0x00};
@@ -688,17 +701,21 @@ void ClearStatusRegister() {
       }
 }
 
-void GetThermalData(uint16_t thermal_data[32][24]) {
+void GetThermalData(uint16_t thermal_data[32][24], bool page) {
   int addr = 0x400;
   for ( int j = 0; j < 24; j++ ) {
     for ( int i = 0; i < 32; i++ ) {
-      char b1 = addr, b2 = (addr>>8);
-      const int len = 2;
-      char cmds[2] = {b2, b1};
-      char buf[len];
-      uint8_t data = bcm2835_i2c_write_read_rs(cmds, len, buf, len);
-      uint16_t val = (buf[0]<<8)+buf[1];
-      thermal_data[i][j] = val;
+      // complex logic for chess pattern reading
+      if ( (((!(i%2) && !(j%2))||((i%2) && (j%2))) && !page) || (((!(i%2) && (j%2))||((i%2) && !(j%2))) && page) ) {
+        // printf("i %d j %d p %d page %d\n", i, j, p, page);
+        const int len = 2;
+        char b1 = addr, b2 = (addr>>8);
+        char cmds[2] = {b2, b1};
+        char buf[len];
+        uint8_t data = bcm2835_i2c_write_read_rs(cmds, len, buf, len);
+        uint16_t val = (buf[0]<<8)+buf[1];
+        thermal_data[i][j] = val;
+      }
       addr++;
     }
   }
@@ -799,8 +816,8 @@ int main(int argc, char *argv[])
     bool stream = true;
     bool video = false;
     bool grey_scale = false;
-    unsigned int baud_rate = 62500;
-    unsigned int refresh_rate = 0;
+    unsigned int baud_rate = 200000;
+    unsigned int refresh_rate = 4;
     int opt;
     bool onlyrefresh = false;
     while ((opt = getopt(argc, argv, "fnvgb:r:h")) != -1) {
@@ -844,8 +861,8 @@ int main(int argc, char *argv[])
         default:
             fprintf(stderr, "Usage: sudo %s [-hgvnf] [-b baud_rate] [-r refresh_rate]\n", argv[0]);
             fprintf(stderr, "\t-g uses greyscale instead of the jet colorscale\n");
-            fprintf(stderr, "\t-b changes the default baud rate of 62500 to something else\n");
-            fprintf(stderr, "\t-r changes the default baud rate of 0.5 Hz. Values are 0, 2, 4, 6, 8, 16, 32, 64.\n");
+            fprintf(stderr, "\t-b changes the default baud rate of 200000 to something else\n");
+            fprintf(stderr, "\t-r changes the default refresh rate of 4 Hz. Values are 0, 2, 4, 6, 8, 16, 32, 64.\n");
             fprintf(stderr, "\t-v outputs to a video using ffmpeg\n");
             fprintf(stderr, "\t-n disables python fileserver for web stream\n");
             fprintf(stderr, "\t-f computes ideal refresh rate and exits\n");
@@ -863,8 +880,7 @@ int main(int argc, char *argv[])
 
 
     bcm2835_i2c_setSlaveAddress(0x33);
-    // bcm2835_i2c_setClockDivider(4000); // base clock is 250MHz
-    bcm2835_i2c_set_baudrate ( baud_rate ); // 62.5 kHz should be same as 4000 clock divider
+    bcm2835_i2c_set_baudrate ( baud_rate ); 
     SetRefreshRate( refresh_rate ) ;
     if ( onlyrefresh ) {
       time_t time0 = time(NULL);
@@ -922,6 +938,9 @@ int main(int argc, char *argv[])
 
     time_t time0 = time(NULL);
     int frame_count = 0;
+    uint16_t thermal_data[32][24];
+    double temperature[32][24];
+    uint8_t color_mag[32][24];
     while(keepRunning) {
       bool hasdata = GetHasData();
       while ( !hasdata ) {
@@ -935,16 +954,15 @@ int main(int argc, char *argv[])
 	}
       }
       ClearStatusRegister();
+
+      bool page = GetPage() ;
+      GetThermalData(thermal_data, page) ;
+           
       uint16_t parameter_data[66];
       GetParameterData(parameter_data) ;
-      uint16_t thermal_data[32][24];
-      GetThermalData(thermal_data) ;
-           
-      double temperature[32][24];
-      ToTemperature ( parameter_data, &eeparams, thermal_data, 0.95, temperature ) ;
+      ToTemperature ( parameter_data, &eeparams, thermal_data, 0.95, temperature, page ) ;
 
       // Construct from and array
-      uint8_t color_mag[32][24];
       TemperatureToColorMag ( temperature, color_mag ) ;
       double avg, max, min;
       GetMinMaxAvg ( temperature, &min, &max, &avg ) ;
@@ -953,6 +971,12 @@ int main(int argc, char *argv[])
 
       cv::Mat img = cv::Mat(32, 24, CV_8U, &color_mag);
       cv::transpose(img,img);
+
+      cv::Mat img_tmp;
+      // 1 is horizontal, 0 is vertical, -1 is both
+      cv::flip(img, img_tmp, 1);
+      img = img_tmp;
+
       cv::resize(img, img, Size(), 10, 10, INTER_CUBIC);
       if ( !grey_scale ) {
         cv::applyColorMap(img, img, COLORMAP_JET);
@@ -974,9 +998,9 @@ int main(int argc, char *argv[])
       frame_count++;
       if ( now-time0 ) {
         printf("\r            \r%d fps", frame_count);
-	fflush(stdout);
+        fflush(stdout);
         frame_count=0;
-	time0=now;
+        time0=now;
       }
 
       if ( video ) {
